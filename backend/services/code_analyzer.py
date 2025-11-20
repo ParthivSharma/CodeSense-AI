@@ -1,52 +1,106 @@
+"""
+Integrated Code Analyzer service.
+
+Entry:
+ - analyze(code: str, language: str) -> Dict
+
+Uses:
+ - PythonLinter
+ - JSLinter
+ - CppLinter
+ - ast_utils.add_parents
+"""
+
+from typing import Dict, Any
+import traceback
 import ast
 
-class CodeAnalyzer(ast.NodeVisitor):
+from backend.services.python_linter import PythonLinter
+from backend.services.js_linter import JSLinter
+from backend.services.cpp_linter import CppLinter
+from backend.services.ast_utils import add_parents
+
+
+class CodeAnalyzerService:
     def __init__(self):
-        self.functions = []
-        self.imports = []
+        self.py_linter = PythonLinter()
+        self.js_linter = JSLinter()
+        self.cpp_linter = CppLinter()
 
-    def analyze(self, code: str):
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            return {
-                "error": f"Syntax Error: {e}"
-            }
+    def analyze(self, code: str, language: str) -> Dict[str, Any]:
+        language = (language or "python").lower().strip()
 
-        self.visit(tree)
-
-        suggestions = []
-
-        # Rule 1: Too many functions
-        if len(self.functions) > 10:
-            suggestions.append("Your file has too many functions. Consider splitting the code.")
-
-        # Rule 2: Missing docstrings
-        for func in self.functions:
-            if ast.get_docstring(func) is None:
-                suggestions.append(f"Function '{func.name}' has no docstring.")
-
-        # Rule 3: Unused imports
-        # (simple placeholder rule)
-        if self.imports and len(self.functions) == 0:
-            suggestions.append("You imported modules but did not use any functions.")
-
-        return {
-            "total_functions": len(self.functions),
-            "imports": self.imports,
-            "suggestions": suggestions
+        result = {
+            "status": "success",
+            "language": language,
+            "issues": [],
+            "issue_count": 0,
+            "meta": {}
         }
 
-    def visit_FunctionDef(self, node):
-        self.functions.append(node)
-        self.generic_visit(node)
+        try:
+            # ---------------- Python ----------------
+            if language == "python":
+                try:
+                    tree = ast.parse(code)
+                    add_parents(tree)
+                except SyntaxError as e:
+                    return {
+                        "status": "error",
+                        "language": "python",
+                        "issues": [{
+                            "type": "Syntax Error",
+                            "line": e.lineno,
+                            "detail": str(e)
+                        }],
+                        "issue_count": 1,
+                        "meta": {"score": 0}
+                    }
 
-    def visit_Import(self, node):
-        for alias in node.names:
-            self.imports.append(alias.name)
-        self.generic_visit(node)
+                issues = self.py_linter.lint(code)
 
-    def visit_ImportFrom(self, node):
-        if node.module:
-            self.imports.append(node.module)
-        self.generic_visit(node)
+            # ---------------- JavaScript ----------------
+            elif language in ("js", "javascript"):
+                issues = self.js_linter.lint(code)
+
+            # ---------------- C++ ----------------
+            elif language in ("cpp", "c++"):
+                issues = self.cpp_linter.lint(code)
+
+            else:
+                issues = [{
+                    "type": "Unsupported Language",
+                    "detail": f"Language '{language}' is not supported yet."
+                }]
+
+            # Save issues
+            result["issues"] = issues
+            result["issue_count"] = len(issues)
+
+            # Score calculation
+            weight = 0
+            for item in issues:
+                t = item.get("type", "").lower()
+                if "syntax" in t or "error" in t:
+                    weight += 10
+                elif "high" in t or "infinite" in t or "raw pointer" in t:
+                    weight += 7
+                elif "missing" in t or "deprecated" in t or "unused" in t:
+                    weight += 3
+                else:
+                    weight += 1
+
+            score = max(0, 100 - weight)
+            result["meta"]["score"] = score
+
+        except Exception as e:
+            result["status"] = "error"
+            result["issues"] = [{
+                "type": "Analyzer Failure",
+                "detail": str(e),
+                "trace": traceback.format_exc()
+            }]
+            result["issue_count"] = 1
+            result["meta"]["score"] = 0
+
+        return result

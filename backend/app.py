@@ -1,6 +1,11 @@
 from fastapi import FastAPI
-from backend.routers.analyze import router as analyze_router
+from backend.routers import analyze
 
-app = FastAPI()
+app = FastAPI(title="CodeSense AI Backend")
 
-app.include_router(analyze_router)
+# Attach routers
+app.include_router(analyze.router)
+
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "CodeSense AI Backend Running"}

@@ -3,19 +3,20 @@ from pydantic import BaseModel
 from backend.services.code_analyzer import CodeAnalyzerService
 from backend.services.review_service import ReviewService
 
-router = APIRouter(tags=["Code Analyzer"])
+router = APIRouter(tags=["Code Review"])
 
 analyzer = CodeAnalyzerService()
 reviewer = ReviewService()
 
 # ---------------------- Request Model ----------------------
-class AnalyzeRequest(BaseModel):
+class ReviewRequest(BaseModel):
     code: str
     language: str   # python, javascript, cpp
 
 # ---------------------- Route Handler ----------------------
 @router.post("/")
-async def analyze_code(req: AnalyzeRequest):
+async def review_code(req: ReviewRequest):
+
     code = req.code.strip()
     language = req.language.lower().strip()
 
@@ -31,21 +32,17 @@ async def analyze_code(req: AnalyzeRequest):
 
     # 1. Analyze code
     analysis_result = analyzer.analyze(code, language)
-    
+
     # 2. Build review on top of analysis
     review_result = reviewer.build_review(analysis_result)
-    
-    # 3. Combine analysis + review into final response
-    response = {
+
+    # 3. Combine into final response
+    return {
         "status": "success",
         "language": language,
         "issues": analysis_result.get("issues", []),
-        "analysis_score": analysis_result.get("meta", {}).get("score", 0),
+        "analysis_score": analysis_result.get("score", 0),
         "review_score": review_result.get("score", 0),
-        "readability_score": review_result.get("readability_score", 0),
-        "performance": review_result.get("performance", []),
         "summary": review_result.get("summary", ""),
         "feedback": review_result.get("feedback", [])
     }
-
-    return response
