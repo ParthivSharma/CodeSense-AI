@@ -20,6 +20,11 @@ from backend.services.js_linter import JSLinter
 from backend.services.cpp_linter import CppLinter
 from backend.services.ast_utils import add_parents
 
+# NEW
+from backend.analyzers.unused_imports import detect_unused_imports
+from backend.analyzers.cyclomatic_complexity import get_function_complexity
+from backend.analyzers.comment_density import get_comment_density
+
 
 class CodeAnalyzerService:
     def __init__(self):
@@ -35,11 +40,15 @@ class CodeAnalyzerService:
             "language": language,
             "issues": [],
             "issue_count": 0,
-            "meta": {}
+            "meta": {
+                "cyclomatic_complexity": [],
+                "comment_density": None,
+                "score": 100
+            }
         }
 
         try:
-            # ---------------- Python ----------------
+            # -------- PYTHON --------
             if language == "python":
                 try:
                     tree = ast.parse(code)
@@ -51,7 +60,8 @@ class CodeAnalyzerService:
                         "issues": [{
                             "type": "Syntax Error",
                             "line": e.lineno,
-                            "detail": str(e)
+                            "detail": str(e),
+                            "severity": "high"
                         }],
                         "issue_count": 1,
                         "meta": {"score": 0}
@@ -59,46 +69,83 @@ class CodeAnalyzerService:
 
                 issues = self.py_linter.lint(code)
 
-            # ---------------- JavaScript ----------------
+                # ---- Unused imports ----
+                for name in detect_unused_imports(code):
+                    issues.append({
+                        "type": "Unused Import",
+                        "detail": f"'{name}' imported but never used",
+                        "severity": "low"
+                    })
+
+                # ---- Cyclomatic complexity ----
+                complexities = get_function_complexity(code)
+                result["meta"]["cyclomatic_complexity"] = complexities
+
+                for item in complexities:
+                    cx = item["complexity"]
+                    if cx > 20:
+                        issues.append({
+                            "type": "High Cyclomatic Complexity",
+                            "detail": f"Function '{item['name']}' has complexity = {cx}",
+                            "severity": "high"
+                        })
+                    elif cx > 10:
+                        issues.append({
+                            "type": "Moderate Cyclomatic Complexity",
+                            "detail": f"Function '{item['name']}' has complexity = {cx}",
+                            "severity": "medium"
+                        })
+
+                # ---- Comment density ----
+                density = get_comment_density(code)
+                result["meta"]["comment_density"] = float(density)
+
+                if density < 0.05:  # <5%
+                    issues.append({
+                        "type": "Low Documentation",
+                        "detail": "Very few comments found — write documentation for clarity",
+                        "severity": "medium"
+                    })
+
+            # -------- JAVASCRIPT --------
             elif language in ("js", "javascript"):
                 issues = self.js_linter.lint(code)
 
-            # ---------------- C++ ----------------
+            # -------- C++ --------
             elif language in ("cpp", "c++"):
                 issues = self.cpp_linter.lint(code)
 
+            # -------- unsupported --------
             else:
                 issues = [{
                     "type": "Unsupported Language",
-                    "detail": f"Language '{language}' is not supported yet."
+                    "detail": f"Language '{language}' not supported",
+                    "severity": "high"
                 }]
 
-            # Save issues
             result["issues"] = issues
             result["issue_count"] = len(issues)
 
-            # Score calculation
-            weight = 0
+            # ---- scoring ----
+            score = 100
             for item in issues:
-                t = item.get("type", "").lower()
-                if "syntax" in t or "error" in t:
-                    weight += 10
-                elif "high" in t or "infinite" in t or "raw pointer" in t:
-                    weight += 7
-                elif "missing" in t or "deprecated" in t or "unused" in t:
-                    weight += 3
-                else:
-                    weight += 1
+                lvl = item.get("severity", "").lower()
+                if lvl == "low":
+                    score -= 1
+                elif lvl == "medium":
+                    score -= 3
+                elif lvl == "high":
+                    score -= 7
 
-            score = max(0, 100 - weight)
-            result["meta"]["score"] = score
+            result["meta"]["score"] = max(0, score)
 
         except Exception as e:
             result["status"] = "error"
             result["issues"] = [{
                 "type": "Analyzer Failure",
                 "detail": str(e),
-                "trace": traceback.format_exc()
+                "trace": traceback.format_exc(),
+                "severity": "high"
             }]
             result["issue_count"] = 1
             result["meta"]["score"] = 0

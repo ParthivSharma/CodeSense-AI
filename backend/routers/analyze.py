@@ -1,51 +1,23 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from backend.services.code_analyzer import CodeAnalyzerService
-from backend.services.review_service import ReviewService
+from backend.models.analyze_response import AnalyzeResponse
 
 router = APIRouter(tags=["Code Analyzer"])
-
 analyzer = CodeAnalyzerService()
-reviewer = ReviewService()
 
-# ---------------------- Request Model ----------------------
 class AnalyzeRequest(BaseModel):
     code: str
-    language: str   # python, javascript, cpp
+    language: str
 
-# ---------------------- Route Handler ----------------------
-@router.post("/")
+@router.post("/", response_model=AnalyzeResponse)
 async def analyze_code(req: AnalyzeRequest):
     code = req.code.strip()
     language = req.language.lower().strip()
 
-    # Validate inputs
     if not code:
         raise HTTPException(status_code=400, detail="Code cannot be empty.")
+    if language not in ["python", "javascript", "cpp", "c++"]:
+        raise HTTPException(status_code=400, detail="Invalid language. Use: python, javascript, cpp, c++")
 
-    if language not in ["python", "javascript", "cpp"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid language. Use: python, javascript, cpp"
-        )
-
-    # 1. Analyze code
-    analysis_result = analyzer.analyze(code, language)
-    
-    # 2. Build review on top of analysis
-    review_result = reviewer.build_review(analysis_result)
-    
-    # 3. Combine analysis + review into final response
-    response = {
-        "status": "success",
-        "language": language,
-        "issues": analysis_result.get("issues", []),
-        "analysis_score": analysis_result.get("meta", {}).get("score", 0),
-        "review_score": review_result.get("score", 0),
-        "readability_score": review_result.get("readability_score", 0),
-        "performance": review_result.get("performance", []),
-        "summary": review_result.get("summary", ""),
-        "feedback": review_result.get("feedback", [])
-    }
-
-    return response
+    return analyzer.analyze(code, language)
